@@ -1,0 +1,16 @@
+# Version de scikit-learn = celle qui a entraine les modeles (sinon les .joblib peuvent ne pas se charger)
+scikit-learn==1.9.1
+joblib
+numpy
+pandas
+scipy
+xarray
+cfgrib
+eccodes
+ecmwf-opendata
+pyproj
+matplotlib
+pillow
+requests
+shapely
+rasterio
