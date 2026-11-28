@@ -26,6 +26,7 @@ ARCHIVE = os.environ.get("CUVETTE_ECMWF_ARCHIVE", r"C:\cuvette_archive\ecmwf")
 # Open data, runs 00/12 UTC : 0-144 h par pas de 3 h, puis 150-360 h par pas de 6 h.
 STEPS_HRES = list(range(0, 145, 3)) + list(range(150, 181, 6))   # J+0 .. J+7.5
 STEPS_ENS = list(range(0, 145, 6)) + list(range(150, 181, 6))
+STEPS_SHORT = list(range(0, 91, 3))      # runs 06/18 UTC : publies seulement jusqu'a +90 h
 # parametres surface et niveaux pression (noms open data)
 SFC_PARAMS = ["2t", "10u", "10v", "msl", "sp", "skt", "tcc", "lcc", "tp"]   # lcc : stratus d inversion
 PL_PARAMS = ["t", "q", "u", "v", "gh"]
@@ -51,14 +52,14 @@ def latest_run(ens=False):
                     step=24, param="2t")
 
 
-def download(run_dt=None, ens=False, steps=None, out_dir=None):
+def download(run_dt=None, ens=False, steps=None, out_dir=None, stream=None):
     """Telecharge sfc + pl pour un run dans out_dir. Retourne (path_sfc, path_pl, run_dt).
     run_dt=None -> dernier run. ens=True -> 50 membres perturbes (stream enfo)."""
     from ecmwf.opendata import Client
     c = Client(source=SOURCE)
     steps = steps or (STEPS_ENS if ens else STEPS_HRES)
     kind = "ens" if ens else "hres"
-    common = dict(stream="enfo" if ens else "oper", type="pf" if ens else "fc", step=steps)
+    common = dict(stream=stream or ("enfo" if ens else "oper"), type="pf" if ens else "fc", step=steps)
     if ens:
         common["number"] = list(range(1, 51))
     if run_dt is not None:

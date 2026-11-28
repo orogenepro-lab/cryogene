@@ -2,7 +2,9 @@ name: CRYOGENE - prevision quotidienne
 
 on:
   schedule:
-    - cron: "40 8 * * *"    # run IFS de 00 UTC (publie jusqu'a +180 h vers 8 h UTC)
+    - cron: "40 2 * * *"    # run IFS de 18 UTC (0-90 h, complete par celui de 12 UTC)
+    - cron: "40 8 * * *"    # run IFS de 00 UTC (complet jusqu'a +180 h)
+    - cron: "40 14 * * *"   # run IFS de 06 UTC (0-90 h, complete par celui de 00 UTC)
     - cron: "40 20 * * *"   # run IFS de 12 UTC
   workflow_dispatch:         # bouton "Run workflow" pour lancer a la main
 
