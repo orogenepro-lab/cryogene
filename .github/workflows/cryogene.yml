@@ -10,8 +10,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: cryogene
@@ -48,22 +46,19 @@ jobs:
       - name: Prevision CRYOGENE
         run: python forecast_html.py --no-open --res 200   # relief exporte a ~200 m
 
-      - name: Preparer le site
+      - name: Publier la page sur le depot public cryogene-site
+        env:
+          SITE_TOKEN: ${{ secrets.SITE_TOKEN }}
         run: |
-          mkdir -p _site
-          cp data/prevision/cryogene_derniere.html _site/index.html
-          touch _site/.nojekyll
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
-
-  deploy:
-    needs: prevision
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          test -n "$SITE_TOKEN" || { echo "::error::secret SITE_TOKEN manquant (voir README.md)"; exit 1; }
+          mkdir site_out
+          cp data/prevision/cryogene_derniere.html site_out/index.html
+          touch site_out/.nojekyll
+          cd site_out
+          git init -q -b main
+          git config user.name "cryogene-bot"
+          git config user.email "cryogene-bot@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Prevision $(date -u +'%Y-%m-%d %H:%M') UTC"
+          # un seul commit, ecrase a chaque run : le depot public reste minuscule
+          git push --force "https://x-access-token:${SITE_TOKEN}@github.com/orogenepro-lab/cryogene-site.git" main

@@ -27,17 +27,19 @@ Précision mesurée (validation croisée) : ~1,2 °C aux stations (1,6 °C les m
 les stations (2,6 °C par inversion), à quoi s'ajoute l'erreur de la prévision IFS qui croît avec l'échéance.
 **Outil expérimental** : il ne remplace pas les prévisions et vigilances de Météo-France.
 
-## Publication automatique (GitHub Pages)
+## Publication automatique (code privé, page publique)
 
-Le workflow `.github/workflows/cryogene.yml` tourne deux fois par jour (08:40 et 20:40 UTC) et à la demande
-(onglet *Actions* → *CRYOGENE - prevision quotidienne* → *Run workflow*). Il télécharge le run IFS, calcule
-la prévision et publie la page sur GitHub Pages.
+Le code, les modèles et le relief restent dans ce dépôt **privé**. Le workflow `.github/workflows/cryogene.yml`
+tourne 4 fois par jour et à la demande (onglet *Actions* → *CRYOGENE - prevision quotidienne* → *Run workflow*) :
+il télécharge le run IFS, calcule la prévision et pousse **uniquement la page HTML** vers le dépôt public
+`cryogene-site`, servi par GitHub Pages (un seul commit, écrasé à chaque run).
 
 Mise en place (une fois) :
-1. Sur le PC, dans le dossier des scripts : `python export_for_github.py` puis copier le contenu du dossier
-   `cryogene_data\` dans `data/` du dépôt (modèles, stations, contours, relief compact).
-2. *Settings* → *Pages* → *Build and deployment* → *Source* : **GitHub Actions**.
-3. Lancer le workflow une première fois à la main.
+1. Sur le PC : `python export_for_github.py --res 300`, puis copier `cryogene_data\` dans `data/` de ce dépôt.
+2. Créer le dépôt public vide `cryogene-site` (*Settings* → *Pages* → *Deploy from a branch* → `main` / `/ (root)`).
+3. Créer un jeton fine-grained limité à `cryogene-site` (*Contents : Read and write*) et l'ajouter ici comme
+   secret `SITE_TOKEN` (*Settings* → *Secrets and variables* → *Actions*).
+4. Lancer le workflow une première fois à la main.
 
 ## Chaîne complète (sur le PC)
 
