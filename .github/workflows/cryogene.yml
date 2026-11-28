@@ -44,7 +44,7 @@ jobs:
           done
 
       - name: Prevision CRYOGENE
-        run: python forecast_html.py --no-open
+        run: python forecast_html.py --no-open --res 200   # relief exporte a ~200 m
 
       - name: Preparer le site
         run: |
