@@ -38,23 +38,38 @@ JOURS = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
 # --------------------------------------------------------------------------- #
 #  Donnees d'entree
 # --------------------------------------------------------------------------- #
-def get_run(run=None):
-    """Telecharge (si besoin) le run IFS HRES 00/12 UTC complet jusqu'a +180 h."""
-    if run is None:
-        from ecmwf.opendata import Client
-        run = Client(source=EF.SOURCE).latest(type="fc", stream="oper", step=max(STEPS), param="2t")
-    run = run.replace(tzinfo=dt.timezone.utc) if run.tzinfo is None else run
+STEPS_SHORT = EF.STEPS_SHORT                   # runs 06/18 UTC : 0-90 h / 3 h
+TD = lambda h: np.timedelta64(int(h), "h")
+
+
+def _utc(t):
+    return t.replace(tzinfo=dt.timezone.utc) if t.tzinfo is None else t
+
+
+def _latest(step):
+    from ecmwf.opendata import Client
+    return _utc(Client(source=EF.SOURCE).latest(type="fc", stream="oper", step=step, param="2t"))
+
+
+def _load_run(run, steps):
+    """Run IFS sur `steps` (archive locale si complete, sinon telechargement) -> Dataset surface + altitude."""
     rdir = os.path.join(EF.ARCHIVE, run.strftime("%Y%m%d_%Hz"))
     p_sfc, p_pl = os.path.join(rdir, "hres_sfc.grib2"), os.path.join(rdir, "hres_pl.grib2")
     ok = False
     if os.path.exists(p_sfc) and os.path.exists(p_pl):
         try:
             g = EF.open_grib(p_sfc)
-            ok = int(g.step.max() / np.timedelta64(1, "h")) >= max(STEPS) and "lcc" in g
+            ok = int(g.step.max() / np.timedelta64(1, "h")) >= max(steps) and "lcc" in g
         except Exception:
             ok = False
     if not ok:
-        p_sfc, p_pl, run = EF.download(run, ens=False, steps=STEPS)
+        try:
+            p_sfc, p_pl, _ = EF.download(run, ens=False, steps=steps)
+        except Exception as e:
+            if run.hour not in (6, 18):
+                raise
+            print(f"[cuvette] run {run:%H}z via stream 'oper' refuse ({str(e)[:80]}) -> essai stream 'scda'")
+            p_sfc, p_pl, _ = EF.download(run, ens=False, steps=steps, stream="scda")
     sfc = EF.open_grib(p_sfc).sortby("latitude").sortby("longitude")
     pl = EF.open_grib(p_pl).sortby("latitude").sortby("longitude")
     dres = lambda d: float(np.round(abs(d.latitude.values[1] - d.latitude.values[0]), 3))
@@ -65,8 +80,52 @@ def get_run(run=None):
               "-> altitude interpolee sur la grille surface")
         pl = pl.interp(latitude=sfc.latitude, longitude=sfc.longitude, kwargs={"fill_value": None})
     ds = xr.merge([sfc, pl], compat="override", join="left")
-    print(f"[cuvette] grille IFS {dres(ds)} deg : lat {float(ds.latitude.min()):.2f}-{float(ds.latitude.max()):.2f}, "
-          f"lon {float(ds.longitude.min()):.2f}-{float(ds.longitude.max()):.2f}")
+    print(f"[cuvette] run {run:%d/%m %H}z, grille IFS {dres(ds)} deg : lat {float(ds.latitude.min()):.2f}-"
+          f"{float(ds.latitude.max()):.2f}, lon {float(ds.longitude.min()):.2f}-{float(ds.longitude.max()):.2f}")
+    return ds
+
+
+def splice(ds_s, ds_b, shift):
+    """Raccord : run court (0-90 h) puis run complet plus ancien de `shift` h, recale sur le run court.
+    Les cumuls de precipitation restent continus au raccord."""
+    cut = int(ds_s.step.max() / np.timedelta64(1, "h"))
+    bsteps = [s for s in STEPS if s - shift > cut]
+    b = ds_b.sel(step=[TD(s) for s in bsteps])
+    if "tp" in b and "tp" in ds_s:
+        b["tp"] = ds_s["tp"].sel(step=TD(cut)) + (b["tp"] - ds_b["tp"].sel(step=TD(cut + shift)))
+    b = b.assign_coords(step=[TD(s - shift) for s in bsteps])
+    if not (np.array_equal(b.latitude, ds_s.latitude) and np.array_equal(b.longitude, ds_s.longitude)):
+        b = b.interp(latitude=ds_s.latitude, longitude=ds_s.longitude, kwargs={"fill_value": None})
+    b = b.drop_vars([c for c in ("time",) if c in b.coords])
+    out = xr.concat([ds_s, b], dim="step", data_vars="all", coords="minimal", compat="override", join="override")
+    return out, cut
+
+
+def get_run(run=None):
+    """Dernier run IFS disponible. Runs 00/12 UTC : complets jusqu'a +180 h. Runs 06/18 UTC (ou 00/12
+    pas encore complets) : 0-90 h, completes au-dela par le dernier run complet (raccord indique dans la page)."""
+    full = None
+    if run is None:
+        full = _latest(max(STEPS))
+        try:
+            newest = _latest(max(STEPS_SHORT))
+        except Exception:
+            newest = full
+        run = max(full, newest)
+    run = _utc(run)
+    if run.hour in (0, 12) and (full is None or run == full):
+        ds = _load_run(run, STEPS)
+        ds.attrs["splice"] = ""
+        return ds, run
+    base = full if (full is not None and full < run) else None
+    if base is None:                                   # dernier 00/12 UTC complet avant ce run
+        base = run.replace(hour=0 if run.hour < 12 else 12)
+        if base == run:
+            base = run - dt.timedelta(hours=12)
+    shift = int((run - base).total_seconds() // 3600)
+    print(f"[cuvette] run {run:%H}z publie jusqu'a +{max(STEPS_SHORT)} h -> complete par le run {base:%d/%m %H}z")
+    ds, cut = splice(_load_run(run, STEPS_SHORT), _load_run(base, STEPS), shift)
+    ds.attrs["splice"] = f"{cut}|{base:%d/%m %H} UTC"
     return ds, run
 
 
@@ -704,6 +763,9 @@ function chart(s){
   D.days.forEach(d => { let kx = -1; s.T.forEach((v, i) => { const h = D.steps[i];
       if (v !== null && h >= d.h12 - 6 && h <= d.h12 + 6 && (kx < 0 || v > s.T[kx])) kx = i; });
     if (kx >= 0) o += `<text class="tx" x="${x(D.steps[kx])}" y="${y(s.T[kx]) - 9}" text-anchor="middle">${fmt(s.T[kx])}°</text>`; });
+  if (D.splice) { const xr = x(D.splice.cut);
+    o += `<line x1="${xr}" x2="${xr}" y1="${T}" y2="${H - B}" stroke="#b26a00" stroke-width="1.5" stroke-dasharray="2 4"/>` +
+         `<text x="${xr + 4}" y="${T + 12}" style="font-size:11px;fill:#b26a00">run du ${D.splice.base} →</text>`; }
   const xs = x(D.frames[fr].s);
   o += `<line x1="${xs}" x2="${xs}" y1="${T}" y2="${H - B}" stroke="var(--acc)" stroke-width="2"/>`;
   o += `<line id="cguide" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="currentColor" opacity=".5" stroke-dasharray="3 3" style="display:none"/>`;
@@ -807,6 +869,8 @@ def tcell(v):
 def build_html(run, bundle, data, tmin_tab, days, ny100, nx100):
     import json
     gen = dt.datetime.now().strftime("%d/%m/%Y %H:%M")
+    sp = data.get("splice")
+    splice_txt = (f" (jusqu'à +{sp['cut']} h, puis run du {sp['base']} au-delà)" if sp else "")
     tabs = "".join(f'<button>{d["lab"]}</button>' for d in days)
     nd = [i for i, d in enumerate(days) if d["has_night"]]
     head = "".join(f"<th>{days[i]['lab']}</th>" for i in nd)
@@ -823,7 +887,7 @@ def build_html(run, bundle, data, tmin_tab, days, ny100, nx100):
 <style>{CSS}</style></head><body>
 <header><h1>CRYOGÈNE <span style="font-weight:400">— le froid au creux des vallées, prévu jusqu'à 7 jours</span></h1>
 <a href="#apropos" style="color:var(--acc)">Qu'est-ce que c'est ?</a>
-<span class="mute">Run IFS HRES {pd.Timestamp(run):%d/%m/%Y %H} UTC · généré le {gen} ·
+<span class="mute">Run IFS HRES {pd.Timestamp(run):%d/%m/%Y %H} UTC{splice_txt} · généré le {gen} ·
 modèle ML ERA5 × {bundle.get('n_stations', '?')} stations ({bundle.get('trained_on', '?')})</span></header>
 <main>
 <div class="card">
@@ -1021,6 +1085,8 @@ def main(run=None, res=300, open_browser=True, every=6):
         st=st_json, colors=[hex_color(x) for x in cvals], tmin=TMIN_C - 12, cstep=0.5,
         ptypes=PTYPES, pcolors=PCOLORS, cl=idx(PAIR[0]), cc=idx(PAIR[1]), W=int(nx100), h0=int(run_ts.hour))
     data["def"] = data["cl"] if data["cl"] is not None else 0
+    spl = ds.attrs.get("splice", "")
+    data["splice"] = dict(cut=int(spl.split("|")[0]), base=spl.split("|")[1]) if spl else None
     data["inv"] = inversion_proba(inv_bundle, dfst, st, steps)
     data["regimes"] = REGIMES
     data["dmain"] = svg_paths(depts["main"], a_, c_, e_, f_) if depts else ""
